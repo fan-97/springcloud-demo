@@ -2,7 +2,11 @@
 <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
-    <groupId>com.fanjie</groupId>
+    <parent>
+        <artifactId>spring-cloud-eureka</artifactId>
+        <groupId>com.fanjie</groupId>
+        <version>0.0.1-SNAPSHOT</version>
+    </parent>
     <artifactId>hello-world</artifactId>
     <version>0.0.1-SNAPSHOT</version>
     <name>hello-world</name>
@@ -25,7 +29,6 @@
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-web</artifactId>
-            <version>${spring.boot-version}</version>
         </dependency>
         <dependency>
             <groupId>com.google.code.gson</groupId>
@@ -49,17 +52,17 @@
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
-                <version>${spring.boot-version}</version>
-                <configuration>
-                    <mainClass>com.fanjie.helloworld.HelloWorldApplication</mainClass>
-                </configuration>
-                <executions>
-                    <execution>
-                        <goals>
-                            <goal>repackage</goal>
-                        </goals>
-                    </execution>
-                </executions>
+<!--                <version>${spring.boot-version}</version>-->
+<!--                <configuration>-->
+<!--                    <mainClass>com.fanjie.helloworld.HelloWorldApplication</mainClass>-->
+<!--                </configuration>-->
+<!--                <executions>-->
+<!--                    <execution>-->
+<!--                        <goals>-->
+<!--                            <goal>repackage</goal>-->
+<!--                        </goals>-->
+<!--                    </execution>-->
+<!--                </executions>-->
             </plugin>
         </plugins>
     </build>
