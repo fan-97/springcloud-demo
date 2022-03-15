@@ -2,8 +2,7 @@ package com.fanjie.ribbonconsumer;
 
 import com.fanjie.ribbonconsumer.controller.ConsumerController;
 import org.springframework.boot.SpringApplication;
-import org.springframework.boot.autoconfigure.SpringBootApplication;
-import org.springframework.cloud.client.discovery.EnableDiscoveryClient;
+import org.springframework.cloud.client.SpringCloudApplication;
 import org.springframework.cloud.client.loadbalancer.LoadBalanced;
 import org.springframework.context.annotation.Bean;
 import org.springframework.web.client.RestTemplate;
@@ -20,8 +19,10 @@ import org.springframework.web.client.RestTemplate;
  * @author fanjie
  * @date 14:55 2022/3/8
  */
-@SpringBootApplication
-@EnableDiscoveryClient
+//@SpringBootApplication
+//@EnableDiscoveryClient
+//@EnableCircuitBreaker
+@SpringCloudApplication
 public class RibbonConsumerApplication {
 
     @Bean
