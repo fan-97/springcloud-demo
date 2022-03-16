@@ -1,8 +1,16 @@
 # 服务治理： Spring Cloud Eureka
-## eureka核心要素： 
+## 服务治理机制： 
 1. 服务注册中心 :提供服务注册和服务发现的功能 [eureka-server](eureka-server)
+   - 失效剔除
+   - 自我保护
 2. 服务提供者 : 作为客户端在注册中心进行注册，并向服务消费者提供服务 , [hello-world](hello-world) 
+   - 服务注册：
+   - 服务同步：会同步到集群中的所有注册中心
+   - 服务续约：Renew
 3. 服务消费者 : 作为客户端在注册中心注册，可以发现在注册中心注册的其他客户端并进行消费（远程调用）[ribbon-consumer](ribbon-consumer) 以及 **feign**
+   - 获取服务： 定时去server端获取服务列表
+   - 服务调用 ： 重点关注`Region` 和`Zone`
+   - 服务下线:satisfied: 客户端下线也会发rest请求到server端
 
 ## 使用
 
@@ -44,8 +52,6 @@ eureka.instance.lease-renewal-interval-in-seconds=30
 # 服务失效时间
 eureka.instance.lease-expiration-duration-in-seconds=90
 ```
-
-
 
 ## 原理
 将一个普通的 Spring Boot 应用注册到 Eureka Server 或是从 Eureka Server 中获 取服务列表时， 主要就做了两件事: 

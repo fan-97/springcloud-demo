@@ -22,9 +22,8 @@ public class HelloController {
     private Registration registration;
 
     @GetMapping("hello")
-    @ResponseBody
     public String hello() {
-        return String.format("hello eureka serviceId: %s  host: %s ", registration.getServiceId(), registration.getHost());
+        return String.format("hello eureka serviceId: %s  host: %s  port:%s", registration.getServiceId(), registration.getHost(),registration.getPort());
     }
 
 }
