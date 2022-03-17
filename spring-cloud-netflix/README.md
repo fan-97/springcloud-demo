@@ -72,6 +72,299 @@ eureka.instance.lease-expiration-duration-in-seconds=90
 
 Eureka Client还需要配置一个Eureka Server的 URL列表。
 
+在进行服务注册和获取服务之前，Eureka要加载两个重要的内容，第一个是**Region** 第二个是**Zone**
+
+在获取了 Region 和 Zone 的信息之后， 才开始真正加载 Eureka Server 的具体地址。 它
+
+根据传入的参数按一定算法确定加载位于哪一个 Zone 配置的 serviceUris。
+
+`com.netflix.discovery.endpoint.EndpointUtils`
+
+```java
+public static Map<String, List<String>> getServiceUrlsMapFromConfig(EurekaClientConfig clientConfig, String instanceZone, boolean preferSameZone) {
+        Map<String, List<String>> orderedUrls = new LinkedHashMap<>();
+        String region = getRegion(clientConfig);
+        String[] availZones = clientConfig.getAvailabilityZones(clientConfig.getRegion());
+        if (availZones == null || availZones.length == 0) {
+            availZones = new String[1];
+            availZones[0] = DEFAULT_ZONE;
+        }
+        logger.debug("The availability zone for the given region {} are {}", region, availZones);
+        int myZoneOffset = getZoneOffset(instanceZone, preferSameZone, availZones);
+
+        String zone = availZones[myZoneOffset];
+        List<String> serviceUrls = clientConfig.getEurekaServerServiceUrls(zone); // 重点
+        if (serviceUrls != null) {
+            orderedUrls.put(zone, serviceUrls);
+        }
+        int currentOffset = myZoneOffset == (availZones.length - 1) ? 0 : (myZoneOffset + 1);
+        while (currentOffset != myZoneOffset) {
+            zone = availZones[currentOffset];
+            serviceUrls = clientConfig.getEurekaServerServiceUrls(zone);
+            if (serviceUrls != null) {
+                orderedUrls.put(zone, serviceUrls);
+            }
+            if (currentOffset == (availZones.length - 1)) {
+                currentOffset = 0;
+            } else {
+                currentOffset++;
+            }
+        }
+
+        if (orderedUrls.size() < 1) {
+            throw new IllegalArgumentException("DiscoveryClient: invalid serviceUrl specified!");
+        }
+        return orderedUrls;
+    }
+```
+
+
+
+`org.springframework.cloud.netflix.eureka.EurekaClientConfigBean`
+
+```java
+public List<String> getEurekaServerServiceUrls(String myZone) {
+		String serviceUrls = this.serviceUrl.get(myZone);
+		if (serviceUrls == null || serviceUrls.isEmpty()) {
+			serviceUrls = this.serviceUrl.get(DEFAULT_ZONE);
+		}
+		if (!StringUtils.isEmpty(serviceUrls)) {
+			final String[] serviceUrlsSplit = StringUtils
+					.commaDelimitedListToStringArray(serviceUrls);
+			List<String> eurekaServiceUrls = new ArrayList<>(serviceUrlsSplit.length);
+			for (String eurekaServiceUrl : serviceUrlsSplit) {
+				if (!endsWithSlash(eurekaServiceUrl)) {
+					eurekaServiceUrl += "/";
+				}
+				eurekaServiceUrls.add(eurekaServiceUrl.trim());
+			}
+			return eurekaServiceUrls;
+		}
+
+		return new ArrayList<>();
+	}
+```
+
+`this.serviceUrl` 是我们在配置文件中通过参数 
+
+```
+# 注册中心地址
+eureka.client.service-url.defaultZone=http://localhost:1111/eureka/
+```
+
+来配置的
+
+### 服务注册
+
+```java
+/**
+ * Annotation to enable a DiscoveryClient implementation.
+ * @author Spencer Gibb
+ */
+@Target(ElementType.TYPE)
+@Retention(RetentionPolicy.RUNTIME)
+@Documented
+@Inherited
+@Import(EnableDiscoveryClientImportSelector.class)
+public @interface EnableDiscoveryClient {
+
+	/**
+	 * If true, the ServiceRegistry will automatically register the local server.
+	 * @return - {@code true} if you want to automatically register.
+	 */
+	boolean autoRegister() default true;
+
+}
+```
+
+通过这个注解，来注入`DiscoveryClient` 实例
+
+Spring Cloud 官方提供的 DiscoveryClient 
+
+```java
+
+/**
+ * Represents read operations commonly available to discovery services such as Netflix
+ * Eureka or consul.io.
+ *
+ * @author Spencer Gibb
+ * @author Olga Maciaszek-Sharma
+ * @author Chris Bono
+ */
+public interface DiscoveryClient extends Ordered {
+
+	/**
+	 * Default order of the discovery client.
+	 */
+	int DEFAULT_ORDER = 0;
+
+	/**
+	 * A human-readable description of the implementation, used in HealthIndicator.
+	 * @return The description.
+	 */
+	String description();
+
+	/**
+	 * Gets all ServiceInstances associated with a particular serviceId.
+	 * @param serviceId The serviceId to query.
+	 * @return A List of ServiceInstance.
+	 */
+	List<ServiceInstance> getInstances(String serviceId);
+
+	/**
+	 * @return All known service IDs.
+	 */
+	List<String> getServices();
+
+	/**
+	 * Can be used to verify the client is valid and able to make calls.
+	 * <p>
+	 * A successful invocation with no exception thrown implies the client is able to make
+	 * calls.
+	 * <p>
+	 * The default implementation simply calls {@link #getServices()} - client
+	 * implementations can override with a lighter weight operation if they choose to.
+	 */
+	default void probe() {
+		getServices();
+	}
+
+	/**
+	 * Default implementation for getting order of discovery clients.
+	 * @return order
+	 */
+	@Override
+	default int getOrder() {
+		return DEFAULT_ORDER;
+	}
+
+}
+```
+
+eureka中提供了 `com.netflix.discovery.DiscoveryClient` 来实现向服务进行注册、续约、获取服务列表。
+
+```java
+private void initScheduledTasks() {
+        if (clientConfig.shouldFetchRegistry()) {
+            // registry cache refresh timer
+            int registryFetchIntervalSeconds = clientConfig.getRegistryFetchIntervalSeconds();
+            int expBackOffBound = clientConfig.getCacheRefreshExecutorExponentialBackOffBound();
+            cacheRefreshTask = new TimedSupervisorTask(
+                    "cacheRefresh",
+                    scheduler,
+                    cacheRefreshExecutor,
+                    registryFetchIntervalSeconds,
+                    TimeUnit.SECONDS,
+                    expBackOffBound,
+                    new CacheRefreshThread()
+            );
+            scheduler.schedule(
+                    cacheRefreshTask,
+                    registryFetchIntervalSeconds, TimeUnit.SECONDS);
+        }
+		// 开启服务注册的定时任务
+        if (clientConfig.shouldRegisterWithEureka()) {
+            int renewalIntervalInSecs = instanceInfo.getLeaseInfo().getRenewalIntervalInSecs();
+            int expBackOffBound = clientConfig.getHeartbeatExecutorExponentialBackOffBound();
+            logger.info("Starting heartbeat executor: " + "renew interval is: {}", renewalIntervalInSecs);
+
+            // Heartbeat timer
+            heartbeatTask = new TimedSupervisorTask(
+                    "heartbeat",
+                    scheduler,
+                    heartbeatExecutor,
+                    renewalIntervalInSecs,
+                    TimeUnit.SECONDS,
+                    expBackOffBound,
+                    new HeartbeatThread()
+            );
+            scheduler.schedule(
+                    heartbeatTask,
+                    renewalIntervalInSecs, TimeUnit.SECONDS);
+
+            // InstanceInfo replicator
+            instanceInfoReplicator = new InstanceInfoReplicator(
+                    this,
+                    instanceInfo,
+                    clientConfig.getInstanceInfoReplicationIntervalSeconds(),
+                    2); // burstSize
+
+            statusChangeListener = new ApplicationInfoManager.StatusChangeListener() {
+                @Override
+                public String getId() {
+                    return "statusChangeListener";
+                }
+
+                @Override
+                public void notify(StatusChangeEvent statusChangeEvent) {
+                    logger.info("Saw local status change event {}", statusChangeEvent);
+                    instanceInfoReplicator.onDemandUpdate();
+                }
+            };
+
+            if (clientConfig.shouldOnDemandUpdateStatusChange()) {
+                applicationInfoManager.registerStatusChangeListener(statusChangeListener);
+            }
+
+            instanceInfoReplicator.start(clientConfig.getInitialInstanceInfoReplicationIntervalSeconds());
+        } else {
+            logger.info("Not registering with Eureka server per configuration");
+        }
+    }
+```
+
+
+
+在if (clientConfig.shouldRegisterWithEureka())  分支里面创建了一个 InstanceInfoReplicator 对象，它会执行定时任务，重点关注该对象的run方法：
+
+```java
+ public void run() {
+     try {
+         discoveryClient.refreshInstanceInfo();
+
+         Long dirtyTimestamp = instanceInfo.isDirtyWithTime();
+         if (dirtyTimestamp != null) {
+             discoveryClient.register();
+             instanceInfo.unsetIsDirty(dirtyTimestamp);
+         }
+     } catch (Throwable t) {
+         logger.warn("There was a problem with the instance info replicator", t);
+     } finally {
+         Future next = scheduler.schedule(this, replicationIntervalSeconds, TimeUnit.SECONDS);
+         scheduledPeriodicRef.set(next);
+     }
+ }
+```
+
+通过 discoveryClient.register()进行服务的注册
+
+```java
+boolean register() throws Throwable {
+    logger.info(PREFIX + "{}: registering service...", appPathIdentifier);
+    EurekaHttpResponse<Void> httpResponse;
+    try {
+        // 通过http方式进行注册
+        httpResponse = eurekaTransport.registrationClient.register(instanceInfo);
+    } catch (Exception e) {
+        logger.warn(PREFIX + "{} - registration failed {}", appPathIdentifier, e.getMessage(), e);
+        throw e;
+    }
+    if (logger.isInfoEnabled()) {
+        logger.info(PREFIX + "{} - registration status: {}", appPathIdentifier, httpResponse.getStatusCode());
+    }
+    return httpResponse.getStatusCode() == Status.NO_CONTENT.getStatusCode();
+}
+```
+
+
+
+
+
+### 服务获取和服务续约
+
+
+
+### 服务注册中心处理
 
 # 客户端负载均衡:Spring Cloud Ribbon
 
