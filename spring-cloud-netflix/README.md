@@ -245,42 +245,15 @@ eureka中提供了 `com.netflix.discovery.DiscoveryClient` 来实现向服务进
 
 ```java
 private void initScheduledTasks() {
-        if (clientConfig.shouldFetchRegistry()) {
-            // registry cache refresh timer
-            int registryFetchIntervalSeconds = clientConfig.getRegistryFetchIntervalSeconds();
-            int expBackOffBound = clientConfig.getCacheRefreshExecutorExponentialBackOffBound();
-            cacheRefreshTask = new TimedSupervisorTask(
-                    "cacheRefresh",
-                    scheduler,
-                    cacheRefreshExecutor,
-                    registryFetchIntervalSeconds,
-                    TimeUnit.SECONDS,
-                    expBackOffBound,
-                    new CacheRefreshThread()
-            );
-            scheduler.schedule(
-                    cacheRefreshTask,
-                    registryFetchIntervalSeconds, TimeUnit.SECONDS);
-        }
-		// 开启服务注册的定时任务
+        ....
+		
         if (clientConfig.shouldRegisterWithEureka()) {
             int renewalIntervalInSecs = instanceInfo.getLeaseInfo().getRenewalIntervalInSecs();
             int expBackOffBound = clientConfig.getHeartbeatExecutorExponentialBackOffBound();
             logger.info("Starting heartbeat executor: " + "renew interval is: {}", renewalIntervalInSecs);
 
-            // Heartbeat timer
-            heartbeatTask = new TimedSupervisorTask(
-                    "heartbeat",
-                    scheduler,
-                    heartbeatExecutor,
-                    renewalIntervalInSecs,
-                    TimeUnit.SECONDS,
-                    expBackOffBound,
-                    new HeartbeatThread()
-            );
-            scheduler.schedule(
-                    heartbeatTask,
-                    renewalIntervalInSecs, TimeUnit.SECONDS);
+
+            ....
 
             // InstanceInfo replicator
             instanceInfoReplicator = new InstanceInfoReplicator(
@@ -305,7 +278,7 @@ private void initScheduledTasks() {
             if (clientConfig.shouldOnDemandUpdateStatusChange()) {
                 applicationInfoManager.registerStatusChangeListener(statusChangeListener);
             }
-
+			// 开启服务注册的定时任务
             instanceInfoReplicator.start(clientConfig.getInitialInstanceInfoReplicationIntervalSeconds());
         } else {
             logger.info("Not registering with Eureka server per configuration");
@@ -362,9 +335,127 @@ boolean register() throws Throwable {
 
 ### 服务获取和服务续约
 
+- 服务获取
 
+```java
+private void initScheduledTasks() {
+    if (clientConfig.shouldFetchRegistry()) {
+                // registry cache refresh timer
+                int registryFetchIntervalSeconds = clientConfig.getRegistryFetchIntervalSeconds();
+                int expBackOffBound = clientConfig.getCacheRefreshExecutorExponentialBackOffBound();
+                cacheRefreshTask = new TimedSupervisorTask(
+                        "cacheRefresh",
+                        scheduler,
+                        cacheRefreshExecutor,
+                        registryFetchIntervalSeconds,
+                        TimeUnit.SECONDS,
+                        expBackOffBound,
+                    //  定时去获取服务列表
+                        new CacheRefreshThread()
+                );
+                scheduler.schedule(
+                        cacheRefreshTask,
+                        registryFetchIntervalSeconds, TimeUnit.SECONDS);
+            }
+     ....	
+ }
+```
+
+- 服务续约
+
+  ```java
+  // 服务续约定时任务
+  boolean renew() {
+          EurekaHttpResponse<InstanceInfo> httpResponse;
+          try {
+              httpResponse = eurekaTransport.registrationClient.sendHeartBeat(instanceInfo.getAppName(), instanceInfo.getId(), instanceInfo, null);
+              logger.debug(PREFIX + "{} - Heartbeat status: {}", appPathIdentifier, httpResponse.getStatusCode());
+              if (httpResponse.getStatusCode() == Status.NOT_FOUND.getStatusCode()) {
+                  REREGISTER_COUNTER.increment();
+                  logger.info(PREFIX + "{} - Re-registering apps/{}", appPathIdentifier, instanceInfo.getAppName());
+                  long timestamp = instanceInfo.setIsDirtyWithTime();
+                  boolean success = register();
+                  if (success) {
+                      instanceInfo.unsetIsDirty(timestamp);
+                  }
+                  return success;
+              }
+              return httpResponse.getStatusCode() == Status.OK.getStatusCode();
+          } catch (Throwable e) {
+              logger.error(PREFIX + "{} - was unable to send heartbeat!", appPathIdentifier, e);
+              return false;
+          }
+      }
+  ```
+
+  
 
 ### 服务注册中心处理
+
+客户端和服务端所有交互都是以REST请求来进行。请求处理都在 `com.netflix.eureka.resources` 包下，比如服务注册：
+
+`com.netflix.eureka.resources.ApplicationResource` 这个类进行处理
+
+```java
+  /**
+     * Registers information about a particular instance for an
+     * {@link com.netflix.discovery.shared.Application}.
+     *
+     * @param info
+     *            {@link InstanceInfo} information of the instance.
+     * @param isReplication
+     *            a header parameter containing information whether this is
+     *            replicated from other nodes.
+     */
+    @POST
+    @Consumes({"application/json", "application/xml"})
+    public Response addInstance(InstanceInfo info,
+                                @HeaderParam(PeerEurekaNode.HEADER_REPLICATION) String isReplication) {
+        logger.debug("Registering instance {} (replication={})", info.getId(), isReplication);
+        // validate that the instanceinfo contains all the necessary required fields
+        if (isBlank(info.getId())) {
+            return Response.status(400).entity("Missing instanceId").build();
+        } else if (isBlank(info.getHostName())) {
+            return Response.status(400).entity("Missing hostname").build();
+        } else if (isBlank(info.getIPAddr())) {
+            return Response.status(400).entity("Missing ip address").build();
+        } else if (isBlank(info.getAppName())) {
+            return Response.status(400).entity("Missing appName").build();
+        } else if (!appName.equals(info.getAppName())) {
+            return Response.status(400).entity("Mismatched appName, expecting " + appName + " but was " + info.getAppName()).build();
+        } else if (info.getDataCenterInfo() == null) {
+            return Response.status(400).entity("Missing dataCenterInfo").build();
+        } else if (info.getDataCenterInfo().getName() == null) {
+            return Response.status(400).entity("Missing dataCenterInfo Name").build();
+        }
+
+        // handle cases where clients may be registering with bad DataCenterInfo with missing data
+        DataCenterInfo dataCenterInfo = info.getDataCenterInfo();
+        if (dataCenterInfo instanceof UniqueIdentifier) {
+            String dataCenterInfoId = ((UniqueIdentifier) dataCenterInfo).getId();
+            if (isBlank(dataCenterInfoId)) {
+                boolean experimental = "true".equalsIgnoreCase(serverConfig.getExperimental("registration.validation.dataCenterInfoId"));
+                if (experimental) {
+                    String entity = "DataCenterInfo of type " + dataCenterInfo.getClass() + " must contain a valid id";
+                    return Response.status(400).entity(entity).build();
+                } else if (dataCenterInfo instanceof AmazonInfo) {
+                    AmazonInfo amazonInfo = (AmazonInfo) dataCenterInfo;
+                    String effectiveId = amazonInfo.get(AmazonInfo.MetaDataKey.instanceId);
+                    if (effectiveId == null) {
+                        amazonInfo.getMetadata().put(AmazonInfo.MetaDataKey.instanceId.getName(), info.getId());
+                    }
+                } else {
+                    logger.warn("Registering DataCenterInfo of type {} without an appropriate id", dataCenterInfo.getClass());
+                }
+            }
+        }
+
+        registry.register(info, "true".equals(isReplication));
+        return Response.status(204).build();  // 204 to be backwards compatible
+    }
+```
+
+
 
 # 客户端负载均衡:Spring Cloud Ribbon
 
@@ -437,6 +528,198 @@ eureka.client.service-url.defaultZone=http://localhost:1111/eureka/
         - 遍历通过`权重计算` 计算出来的权重列表,比较权重的大小，如果权重值大于等千随机数， 就拿当前权重列表的索引值去服务实例列表中获取具体的实例
 
 **示例**：[ribbon-consumer](/ribbon-consumer)
+
+
+
+由以上可知 负载均衡是由 `@LoadBalanced` 注解来开启 ，标记RestTemplate，以使用LoadBalancerClient 来配置它
+
+```java
+
+/**
+ * Annotation to mark a RestTemplate or WebClient bean to be configured to use a
+ * LoadBalancerClient.
+ * @author Spencer Gibb
+ */
+@Target({ ElementType.FIELD, ElementType.PARAMETER, ElementType.METHOD })
+@Retention(RetentionPolicy.RUNTIME)
+@Documented
+@Inherited
+@Qualifier
+public @interface LoadBalanced {
+
+}
+	
+```
+
+`LoadBalancerClient `
+
+```java
+public interface LoadBalancerClient extends ServiceInstanceChooser {
+    // 根据传入的 服 务名serviceld, 从负载均衡器中挑选一个对应服务的实例 。
+    ServiceInstance choose(String serviceId); 
+	// 使用从负载均衡器中挑选出来的服务实例来发起请求
+	<T> T execute(String serviceId, LoadBalancerRequest<T> request) throws IOException;
+	<T> T execute(String serviceId, ServiceInstance serviceInstance,
+			LoadBalancerRequest<T> request) throws IOException;
+    // 将服务名 替换成对应的ip:port方式
+	URI reconstructURI(ServiceInstance instance, URI original);
+}
+```
+
+
+
+重要的自动配置类 加载 LoadBalancerClient 和 LoadBalancerInterceptor对象,
+
+```java
+@Configuration(proxyBeanMethods = false)
+@ConditionalOnClass(RestTemplate.class)
+@ConditionalOnBean(LoadBalancerClient.class)
+@EnableConfigurationProperties(LoadBalancerRetryProperties.class)
+public class LoadBalancerAutoConfiguration {
+
+	@LoadBalanced
+	@Autowired(required = false)
+	private List<RestTemplate> restTemplates = Collections.emptyList();
+
+	@Autowired(required = false)
+	private List<LoadBalancerRequestTransformer> transformers = Collections.emptyList();
+
+	@Bean
+	public SmartInitializingSingleton loadBalancedRestTemplateInitializerDeprecated(
+			final ObjectProvider<List<RestTemplateCustomizer>> restTemplateCustomizers) {
+		return () -> restTemplateCustomizers.ifAvailable(customizers -> {
+			for (RestTemplate restTemplate : LoadBalancerAutoConfiguration.this.restTemplates) {
+				for (RestTemplateCustomizer customizer : customizers) {
+					customizer.customize(restTemplate);
+				}
+			}
+		});
+	}
+
+	@Bean
+	@ConditionalOnMissingBean
+	public LoadBalancerRequestFactory loadBalancerRequestFactory(
+			LoadBalancerClient loadBalancerClient) {
+		return new LoadBalancerRequestFactory(loadBalancerClient, this.transformers);
+	}
+
+	@Configuration(proxyBeanMethods = false)
+	@ConditionalOnMissingClass("org.springframework.retry.support.RetryTemplate")
+	static class LoadBalancerInterceptorConfig {
+		
+        // 进行请求的拦截，实现客户端负载均衡
+		@Bean
+		public LoadBalancerInterceptor loadBalancerInterceptor(
+				LoadBalancerClient loadBalancerClient,
+				LoadBalancerRequestFactory requestFactory) {
+			return new LoadBalancerInterceptor(loadBalancerClient, requestFactory);
+		}
+		// 给RestTemplate增加一个LoadBalancerInterceptor拦截器
+		@Bean
+		@ConditionalOnMissingBean
+		public RestTemplateCustomizer restTemplateCustomizer(
+				final LoadBalancerInterceptor loadBalancerInterceptor) {
+			return restTemplate -> {
+				List<ClientHttpRequestInterceptor> list = new ArrayList<>(
+						restTemplate.getInterceptors());
+				list.add(loadBalancerInterceptor);
+				restTemplate.setInterceptors(list);
+			};
+		}
+
+	}
+
+	/**
+	 * Auto configuration for retry mechanism.
+	 */
+	@Configuration(proxyBeanMethods = false)
+	@ConditionalOnClass(RetryTemplate.class)
+	public static class RetryAutoConfiguration {
+
+		@Bean
+		@ConditionalOnMissingBean
+		public LoadBalancedRetryFactory loadBalancedRetryFactory() {
+			return new LoadBalancedRetryFactory() {
+			};
+		}
+
+	}
+
+	/**
+	 * Auto configuration for retry intercepting mechanism.
+	 */
+	@Configuration(proxyBeanMethods = false)
+	@ConditionalOnClass(RetryTemplate.class)
+	public static class RetryInterceptorAutoConfiguration {
+
+		@Bean
+		@ConditionalOnMissingBean
+		public RetryLoadBalancerInterceptor loadBalancerRetryInterceptor(
+				LoadBalancerClient loadBalancerClient,
+				LoadBalancerRetryProperties properties,
+				LoadBalancerRequestFactory requestFactory,
+				LoadBalancedRetryFactory loadBalancedRetryFactory) {
+			return new RetryLoadBalancerInterceptor(loadBalancerClient, properties,
+					requestFactory, loadBalancedRetryFactory);
+		}
+
+		@Bean
+		@ConditionalOnMissingBean
+		public RestTemplateCustomizer restTemplateCustomizer(
+				final RetryLoadBalancerInterceptor loadBalancerInterceptor) {
+			return restTemplate -> {
+				List<ClientHttpRequestInterceptor> list = new ArrayList<>(
+						restTemplate.getInterceptors());
+				list.add(loadBalancerInterceptor);
+				restTemplate.setInterceptors(list);
+			};
+		}
+
+	}
+
+}
+```
+
+@ConditionalOnClass(RestTemplate.class)
+@ConditionalOnBean(LoadBalancerClient.class)
+
+所以加载自动配置对象需要RestTemplate LoadBalancerClient对象
+
+分析loadBalancerRetryInterceptor如何处理RestTemplate为客户端负载均衡,
+
+```java
+public class LoadBalancerInterceptor implements ClientHttpRequestInterceptor {
+
+	private LoadBalancerClient loadBalancer;
+
+	private LoadBalancerRequestFactory requestFactory;
+
+	public LoadBalancerInterceptor(LoadBalancerClient loadBalancer,
+			LoadBalancerRequestFactory requestFactory) {
+		this.loadBalancer = loadBalancer;
+		this.requestFactory = requestFactory;
+	}
+
+	public LoadBalancerInterceptor(LoadBalancerClient loadBalancer) {
+		// for backwards compatibility
+		this(loadBalancer, new LoadBalancerRequestFactory(loadBalancer));
+	}
+
+	@Override
+	public ClientHttpResponse intercept(final HttpRequest request, final byte[] body,
+			final ClientHttpRequestExecution execution) throws IOException {
+		final URI originalUri = request.getURI();
+		String serviceName = originalUri.getHost();
+		Assert.state(serviceName != null,
+				"Request URI does not contain a valid hostname: " + originalUri);
+		return this.loadBalancer.execute(serviceName,
+				this.requestFactory.createRequest(request, body, execution));
+	}
+
+}
+```
+
+当一个被@LoadBalanced 注解修饰的 RestTemplate 对象向外发起 HTTP 请求时， 会被 LoadBalancerintercep七or 类的 intercept 函数所拦截。
 
 
 # 服务容错保护：Spring Cloud Hystrix
