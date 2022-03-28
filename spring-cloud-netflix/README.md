@@ -1,5 +1,7 @@
 # 服务治理： Spring Cloud Eureka
+
 ## 服务治理机制： 
+
 1. 服务注册中心 :提供服务注册和服务发现的功能 [eureka-server](eureka-server)
    - 失效剔除
    - 自我保护
@@ -54,7 +56,9 @@ eureka.instance.lease-expiration-duration-in-seconds=90
 ```
 
 ## 原理
+
 将一个普通的 Spring Boot 应用注册到 Eureka Server 或是从 Eureka Server 中获 取服务列表时， 主要就做了两件事: 
+
 - 在应用主类配置@EnableDiscoryClient注解. 
 - 在application.properties中使用 eureka.client.serviceUrl.defaultZone 参数指定了服务注册中心的位置。
 
@@ -182,7 +186,6 @@ public @interface EnableDiscoveryClient {
 Spring Cloud 官方提供的 DiscoveryClient 
 
 ```java
-
 /**
  * Represents read operations commonly available to discovery services such as Netflix
  * Eureka or consul.io.
@@ -468,7 +471,9 @@ private void initScheduledTasks() {
 
 
 ## 使用
+
 引入依赖：
+
 ```xml
 <dependencies>
     <dependency>
@@ -481,7 +486,9 @@ private void initScheduledTasks() {
     </dependency>
 </dependencies>
 ```
+
 加上注解：
+
 ```java
 @SpringBootApplication
 @EnableEurekaClient
@@ -493,13 +500,16 @@ public class HelloWorldApplication {
 
 }
 ```
+
 配置注册中心：
+
 ```properties
 # 实例名称（注册到注册中心的名称)
 spring.application.name=hello-service
 # 注册中心地址
 eureka.client.service-url.defaultZone=http://localhost:1111/eureka/
 ```
+
 ## 原理
 
 核心类
@@ -509,9 +519,9 @@ eureka.client.service-url.defaultZone=http://localhost:1111/eureka/
 
 
 
--  RandomRule: 从服务列表中随机选择服务
+- RandomRule: 从服务列表中随机选择服务
 
--  RoundRobinRule: 以轮询的方式选择服务
+- RoundRobinRule: 以轮询的方式选择服务
 
 - RetryRule: 以轮询的方式选择服务，会在约定时间内重试直到选择到该服务（内部用RoundRobinRule实现）
 
@@ -521,11 +531,11 @@ eureka.client.service-url.defaultZone=http://localhost:1111/eureka/
 
     - 定时任务：启动一个定时任务，用来为每一个服务实例计算权重，每30s执行一次。
     - 权重计算：计算的是每个实例的权重区间，并非实例的优先级。每个实例的区间下限是上一个实例的区间上限 ， 而每个实例的区间上限则是 我们上面计算并存储于`ListaccumulatedWeights`中的权重值， 其中第一个实例的下限默认为零。
-        - 根据`LoadBalancerStats`中记录的每个实例的统计信息， 累加所有 实例的平均响应时间， 得到总平均响应时间`totalResponseTime`, 该值会用于后续的计算。
-        - 为负载均衡器中维护的实例清单逐个计算权重（从第 一个开始）， 计算规则为(`weightSoFar`+`totalResponseTime` - `实例的平均响应时间`)，其中`weightSoFar`初始化为零， 并且每 计算好一个权重需要累加到 `weightSoFar`上供下一次计算使用。
+      - 根据`LoadBalancerStats`中记录的每个实例的统计信息， 累加所有 实例的平均响应时间， 得到总平均响应时间`totalResponseTime`, 该值会用于后续的计算。
+      - 为负载均衡器中维护的实例清单逐个计算权重（从第 一个开始）， 计算规则为(`weightSoFar`+`totalResponseTime` - `实例的平均响应时间`)，其中`weightSoFar`初始化为零， 并且每 计算好一个权重需要累加到 `weightSoFar`上供下一次计算使用。
     - 实例选择：
-        - 生成一个[0,最大权重值)的随机数  `Random.nextDouble`
-        - 遍历通过`权重计算` 计算出来的权重列表,比较权重的大小，如果权重值大于等千随机数， 就拿当前权重列表的索引值去服务实例列表中获取具体的实例
+      - 生成一个[0,最大权重值)的随机数  `Random.nextDouble`
+      - 遍历通过`权重计算` 计算出来的权重列表,比较权重的大小，如果权重值大于等千随机数， 就拿当前权重列表的索引值去服务实例列表中获取具体的实例
 
 **示例**：[ribbon-consumer](/ribbon-consumer)
 
@@ -534,7 +544,6 @@ eureka.client.service-url.defaultZone=http://localhost:1111/eureka/
 由以上可知 负载均衡是由 `@LoadBalanced` 注解来开启 ，标记RestTemplate，以使用LoadBalancerClient 来配置它
 
 ```java
-
 /**
  * Annotation to mark a RestTemplate or WebClient bean to be configured to use a
  * LoadBalancerClient.
@@ -766,6 +775,141 @@ public class RibbonConsumerApplication {
 ```
 
 
+
+## 执行流程
+
+1. 创建HystrixCommand或HystrixObservableCommand对象
+
+2. 命令执行——同步、异步返回结果
+
+3. 结果是否被缓存
+
+   若当前命令的请求缓存功能是被启用的， 并且该命令缓存命中， 那么缓存的结果会立
+
+   即以Observable 对象的形式 返回。
+
+4. 断路器是否打开
+
+   在命令结果没有缓存命中的时候， Hystrix在执行命令前需要检查断路器是否为打开状态：
+
+   - 如果断路器是打开的，那么Hystrix不会执行命令，而是转接到fallback处理逻辑（对应下面第8步）。
+
+   - 如果断路器是关闭的， 那么Hystrix跳到第5步，检查是否有可用资源来 执行命令。
+
+
+5. 线程池/请求队列/信号量是否占满
+
+   如果已经占满 则跳转到第八步，fallBack执行
+
+6. HystrixObservableCommand.construct()或HystrixCommand.run()Hystrix会根据我们编写的方法来决定采取什么样的方式去请求依赖服务。
+
+   - HystrixCommand.run(): 返回一个单一 的结果，或者抛出异常。
+   - HystrixObservableCommand.construct() :返回一个Observable对象来发射多个结果，或通过onError发送错误通知。
+
+   如果方法执行时间超过了阈值，那么直接会到第八步 fallback来进行处理
+
+7. 计算断路器的健康度
+
+8. fallback处理——降级处理
+
+   - 第4步， 当前命令处于 “熔断I短路 ” 状态， 断路器是打开的时候。
+
+   - 第5步， 当前命令的线程池、 请求队列或 者信号量被占满的时候。
+   - 第6步，Hys红ixObservableCommand.cons七ruct()或HystrixCommand.run()抛出异常的时候。
+
+9. 返回成功的响应
+
+## 功能
+
+- 依赖隔离——为每个依赖服务创建一个线程池来请求
+- 服务降级
+- 异常处理
+- 请求缓存
+- 请求合并
+
+
+
+# 声明式服务调用： Spring Cloud Feign
+
+## 使用
+
+引入依赖:
+
+```xml
+<!-- springboot 父依赖 --> 
+ <parent>
+     <groupId>org.springframework.boot</groupId>
+     <artifactId>spring-boot-starter-parent</artifactId>
+     <version>2.3.12.RELEASE</version>
+     <relativePath/> <!-- lookup parent from repository -->
+</parent>
+<!-- eureka、feign -->
+<dependencies>
+     <dependency>
+         <groupId>org.springframework.boot</groupId>
+         <artifactId>spring-boot-starter-web</artifactId>
+     </dependency>
+     <dependency>
+         <groupId>org.springframework.cloud</groupId>
+         <artifactId>spring-cloud-starter-netflix-eureka-server</artifactId>
+     </dependency>
+     <dependency>
+         <groupId>org.springframework.cloud</groupId>
+         <artifactId>spring-cloud-starter-openfeign</artifactId>
+     </dependency>
+</dependencies>
+
+<!-- springcloud 依赖 -->
+<dependencyManagement>
+    <dependencies>
+        <dependency>
+            <groupId>org.springframework.cloud</groupId>
+            <artifactId>spring-cloud-dependencies</artifactId>
+            <version>${spring.cloud-version}</version>
+            <type>pom</type>
+            <scope>import</scope>
+        </dependency>
+    </dependencies>
+</dependencyManagement>
+```
+
+开启feign客户端：
+
+```java
+@SpringBootApplication
+@EnableFeignClients
+@EnableDiscoveryClient
+public class FeignConsumerApplication { 
+    public static void main(String[] args) {
+        SpringApplication.run(FeignConsumerApplication.class,args);
+    }
+}
+```
+
+绑定服务提供的REST接口:
+
+```java
+@FeignClient(value = "hello-service")
+public interface HelloService {
+    @RequestMapping("/hello")
+    String hello();
+}
+```
+
+调用服务：
+
+```java
+@RestController
+public class HelloController {
+    @Autowired
+    private HelloService helloService;
+
+    @GetMapping("/feign-consumer")
+    public String helloConsumer() {
+        return helloService.hello();
+    }
+}
+```
 
 
 
