@@ -1,7 +1,7 @@
 package com.fanjie.controller;
 
 import com.fanjie.helloserviceapi.dto.User;
-import com.fanjie.service.HelloService;
+import com.fanjie.service.HelloService2;
 import com.fanjie.service.RefactorHelloService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -16,21 +16,21 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 public class HelloController {
     @Autowired
-    private HelloService helloService;
+    private HelloService2 helloService2;
     @Autowired
     private RefactorHelloService refactorHelloService;
 
     @GetMapping("/feign-consumer")
     public String helloConsumer() {
-        return helloService.hello();
+        return helloService2.hello();
     }
 
     @RequestMapping(value = "/feign-consumer2", method = RequestMethod.GET)
     public String helloConsumer2() {
-        return helloService.hello() + "\n" +
-                helloService.hello("DIDI") + "\n" +
-                helloService.hello("DIDI", 30) + "\n" +
-                helloService.hello(new User("DIDI", 30)) + "\n";
+        return helloService2.hello() + "\n" +
+                helloService2.hello("DIDI") + "\n" +
+                helloService2.hello("DIDI", 30) + "\n" +
+                helloService2.hello(new User("DIDI", 30)) + "\n";
     }
 
     @RequestMapping(value = "/feign-consumer3", method = RequestMethod.GET)

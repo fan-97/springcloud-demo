@@ -8,8 +8,8 @@ import org.springframework.web.bind.annotation.*;
  * @author fanjie
  * @date 2022/3/24 11:47
  */
-@FeignClient(value = "hello-service")
-public interface HelloService {
+@FeignClient(value = "hello-service", contextId = "old", fallback = FallBackHelloService.class)
+public interface HelloService2 {
     @RequestMapping("/hello")
     String hello();
 

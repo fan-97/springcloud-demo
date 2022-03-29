@@ -7,3 +7,18 @@ eureka:
   client:
     service-url:
       defaultZone: http://localhost:1111/eureka/
+hello-service:
+  ribbon:
+    ConnectTimeout: 500
+    ReadTimeout: 2000
+    OkToRetryAllOperation: true
+    MaxAutoRetriesNextServer: 2
+    MaxAutoRetries: 1
+# 开启服务降级
+feign:
+  circuitbreaker:
+    enabled: true
+# feign 客户端日志
+logging:
+  level:
+    com.fanjie.service.HelloService2: DEBUG

@@ -730,6 +730,20 @@ public class LoadBalancerInterceptor implements ClientHttpRequestInterceptor {
 
 当一个被@LoadBalanced 注解修饰的 RestTemplate 对象向外发起 HTTP 请求时， 会被 LoadBalancerintercep七or 类的 intercept 函数所拦截。
 
+## 重试机制
+
+hello-service:为注册的服务名称，以下配置通过服务名称来单独给此服务进行配置
+
+-  spring.cloud.loadbalancer.retry.enabled: 该参数用来开启重试机制，它默认是关闭的。
+- hystrix.command.default.execution.isolation.thread.timeoutInMilliseconds:断路器的超时时间需要大于Ribbon的超时时间， 不然不会触发重试.
+- hello-service.ribbon.ConnectTimeout： 请求连接的超时时间
+- hello-service.ribbon.ReadTimeout： 请求处理的超时时间。
+- hello-service.ribbon.OkToRetryOnAllOperations:对所有操作请求都进行重试
+- hello-service.ribbon.MaxAutoRetriesNextServer: 切换实例的重试次数。
+- hello-service.ribbon.MaxAutoRetries:对当前实例的重试次数
+
+> 根据如上配置， 当访问到故障请求的时候， 它会再尝试访问 一次当前实例（次数由MaxAutoRetries配置）， 如果不行， 就换 一个实例进行访问， 如果还是不行， 再换 一次实例访问（更换次数由MaxAutoRe红iesNextServer配置）， 如果依然不行， 返回失败信息。
+
 
 # 服务容错保护：Spring Cloud Hystrix
 
@@ -912,4 +926,63 @@ public class HelloController {
 ```
 
 
+
+## 功能
+
+### 日志记录
+
+调整feignclient日志级别：
+
+1. 全局
+
+```java
+@SpringBootApplication
+@EnableFeignClients
+@EnableDiscoveryClient
+public class FeignConsumerApplication {
+    /**
+     * 全局配置
+     * @return
+     */
+    @Bean
+    Logger.Level feignLoggerLevel(){
+        return Logger.Level.FULL;
+    }
+
+    public static void main(String[] args) {
+        SpringApplication.run(FeignConsumerApplication.class,args);
+    }
+}
+
+```
+
+2. 针对客户端
+
+```java
+@Configuration 
+public class FullLogConfiguration { 
+    @Bean 
+    Logger.Level feignLoggerLevel() { 
+    	return Logger.Level.FULL;
+    }
+}
+---------------------------
+@FeignClient(name= "HELLO-SERVICE", configura七ion = FullLogConfiguration.class) 
+public interface HelloService {
+}	
+
+    
+
+```
+
+
+
+日志级别：
+
+- NONE: 不记录任何日志
+- BASIC: 仅记录请求方法、URL以及响应码和执行时间
+- HEADERS：除了记录BASIC级别的信息之外， 还会记录请求和响应的头信息。
+- FULL：记录所有请求与响应的明细， 包括头信息、 请求体、 元数据等。
+
+# API 网关服务：Spring Cloud Zuul
 
