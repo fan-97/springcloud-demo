@@ -986,3 +986,148 @@ public interface HelloService {
 
 # API 网关服务：Spring Cloud Zuul
 
+## 使用
+
+### 路由转发
+
+- 引入依赖
+
+```xml
+<dependency>
+    <groupId>org.springframework.cloud</groupId>
+    <artifactId>spring-cloud-starter-netflix-zuul</artifactId>
+</dependency>
+<dependency>
+    <groupId>org.springframework.cloud</groupId>
+    <artifactId>spring-cloud-starter-netflix-eureka-client</artifactId>
+</dependency>
+```
+
+- 开启API网关服务
+
+  ```java
+  @SpringCloudApplication
+  @EnableZuulProxy
+  public class ApiGatewayApplication {
+      public static void main(String[] args) {
+          SpringApplication.run(ApiGatewayApplication.class, args);
+      }
+  }
+  ```
+
+- 配置路由转发
+
+```yaml
+zuul:
+  routes:
+    # 路由转发
+    api-a-url: # 名称
+      path: /api-a-url/** # 匹配路由
+      url: http://localhost:8080/ # 转发路由
+   # 配合注册中心和服务发现来进行转发
+    api-a:
+      path: /api-a/**
+      serviceId: hello-service
+    api-b:
+      path: /api-b/**
+      serviceId: feign-consumer
+```
+
+匹配到api-a-url的路由都会转发到 http://localhost:8080
+
+### 请求拦截
+
+对所有请求做统一的拦截处理，比如鉴权
+
+实现`ZuulFilter`
+
+```java
+public class AccessFilter extends ZuulFilter {
+    @Override
+    public String filterType() {
+        return "pre";
+    }
+
+    @Override
+    public int filterOrder() {
+        return 0;
+    }
+
+    @Override
+    public boolean shouldFilter() {
+        return true;
+    }
+
+    @Override
+    public Object run() throws ZuulException {
+        RequestContext ctx = RequestContext.getCurrentContext();
+        HttpServletRequest request = ctx.getRequest();
+        log.info("send {} request to{}", request.getMethod(), request.getRequestURL().toString());
+        Object accessToken = request.getParameter("accessToken");
+        if (accessToken == null) {
+            log.warn("access token is empty");
+            // 不进行路由转发，返回错误信息
+            ctx.setSendZuulResponse(false);
+            ctx.setResponseStatusCode(401);
+            return null;
+        }
+        log.info("access token ok");
+        return null;
+    }
+}
+```
+
+注册Bean
+
+```java
+@Bean
+public AccessFilter accessFilter() {
+    return new AccessFilter();
+}
+```
+
+## 路由
+
+自定义路由映射规则：
+
+添加如下配置：
+
+```java
+  /**
+     * 自定义路由映射规则
+     * @return
+     */
+    @Bean
+    public PatternServiceRouteMapper patternServiceRouteMapper(){
+        return new PatternServiceRouteMapper("(?<name>^.+)-(?<version>v.+$)","${version}/${name}");
+    }
+```
+
+本地转发，将路由转发到网关本地的请求地址
+
+```
+zuul.routes.api-b.path=/api-b/** 
+zuul.routes.api-b.url=forward:/local
+
+@RestController 
+public class HelloController { 
+    @RequestMapping ("/local /hello") 
+    public String hello() { 
+        return "Hello World Local";
+    }
+}
+```
+
+zuul会过滤掉Cookie、Set-Cookie、Authorization这几个敏感属性，可以通过一下的方式来进行配置传递这些属性
+
+```java
+＃方法一：对指定路由开启自定义敏感头
+zuul.routes.<router>.customSensitiveHeaders=true 
+＃方法二：将指定路由的敏感头设置为空
+zuul.routes.<router>.sensitiveHeaders=
+```
+
+请求生命周期
+
+![](../resources/zuul1.png)
+

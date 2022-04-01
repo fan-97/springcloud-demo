@@ -1,0 +1,22 @@
+server:
+  port: 5555
+spring:
+  application:
+    name: api-gateway
+eureka:
+  client:
+    service-url:
+      defaultZone: http://localhost:1111/eureka/
+zuul:
+  routes:
+    # 路由转发
+    api-a-url: # 名称
+      path: /api-a-url/** # 匹配路由
+      url: http://localhost:8080/ # 转发路由
+    # 配合注册中心和服务发现来进行转发
+    api-a:
+      path: /api-a/**
+      serviceId: hello-service
+    api-b:
+      path: /api-b/**
+      serviceId: feign-consumer
