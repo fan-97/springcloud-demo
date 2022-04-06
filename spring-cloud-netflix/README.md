@@ -927,8 +927,6 @@ public class HelloController {
 
 
 
-## 功能
-
 ### 日志记录
 
 调整feignclient日志级别：
